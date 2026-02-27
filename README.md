@@ -1,76 +1,37 @@
-# Nebula: An Advanced Experimental Programming Language
+# Nebula: Hyper-Advanced Experimental Programming Language
 
-Nebula is a **high-level, expression-first programming language** implemented in Python in this repository. It is designed to feel modern and powerful while still being small enough to inspect end-to-end.
-
-## What makes Nebula "advanced"
-
-Nebula includes several advanced language ideas in one coherent runtime:
-
-- **First-class functions and lexical closures**
-- **Immutable-style expression evaluation** with explicit `let` bindings
-- **Pattern matching** with destructuring (`[head, tail]`) and wildcard (`_`)
-- **Pipeline operator (`|>`)** for readable dataflow composition
-- **User functions + recursion**
-- **Static type inference pass** (Int, Float, Bool, String, List, Function, Unknown)
-- **Constant-fold optimization pass** before execution
-- **Tree-walk runtime with built-ins**
-
-Even as an experimental implementation, Nebula has a full compile pipeline:
+Nebula is a compact but feature-dense language runtime with a full pipeline:
 
 1. Lexing
-2. Parsing (Pratt parser)
+2. Pratt parsing
 3. Static type inference
-4. Optimization
-5. Evaluation
+4. AST optimization (constant folding)
+5. Evaluation with closures
+
+## Advanced feature set
+
+- First-class functions + lexical closures + recursion
+- Anonymous functions (`fun(...) => ...`)
+- Functional pipelines (`|>`) with placeholder injection (`_`)
+- Pattern matching with destructuring
+- Expression-based control flow (`if ... then ... else ...`)
+- List + dictionary literals
+- Member access (`config.timeout`) and indexing (`arr[0]`, `dict["k"]`)
+- Partial application/currying for user-defined functions
+- Higher-order built-ins (`map`, `filter`, `reduce`, `range`, etc.)
 
 ## Quick start
 
 ```bash
-python3 nebula.py examples/fib.neb
+python3 nebula.py examples/extreme.neb
+python3 nebula.py --types examples/extreme.neb
 ```
 
-Run tests:
-
-```bash
-python3 -m unittest discover -s tests -p 'test_*.py' -v
-```
-
-## Language tour
-
-### Let bindings and functions
+## Syntax highlights
 
 ```nebula
-let x = 40;
-let y = 2;
-fn add(a, b) => a + b;
-print(add(x, y));
+fn fact(n) => if n <= 1 then 1 else n * fact(n - 1);
+let data = {title: "Nebula", version: 2};
+let nums = range(6) |> map(fun(x) => x * x);
+nums |> filter(fun(x) => x > 10) |> reduce(0, fun(acc, x) => acc + x) |> print;
 ```
-
-### Pattern matching
-
-```nebula
-let pair = [10, 20];
-match pair with
-  [a, b] => a + b
-  _ => 0;
-```
-
-### Pipeline style
-
-```nebula
-fn inc(n) => n + 1;
-fn double(n) => n * 2;
-
-5 |> inc |> double |> print;
-```
-
-## Files
-
-- `nebula.py` — complete implementation (lexer, parser, inference, optimizer, evaluator, CLI)
-- `examples/fib.neb` — recursive function + pipeline demo
-- `examples/match.neb` — pattern matching demo
-- `tests/test_nebula.py` — parser/runtime/type-inference/optimization tests
-
-## Notes
-
-This project is intentionally self-contained and dependency-free (Python standard library only).

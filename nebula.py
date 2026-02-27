@@ -2,15 +2,28 @@
 from __future__ import annotations
 
 import argparse
+import functools
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 
 # =====================
 # LEXER
 # =====================
 
-KEYWORDS = {"let", "fn", "match", "with", "true", "false"}
+KEYWORDS = {
+    "let",
+    "fn",
+    "fun",
+    "match",
+    "with",
+    "if",
+    "then",
+    "else",
+    "true",
+    "false",
+    "not",
+}
 
 
 @dataclass
@@ -63,7 +76,7 @@ class Lexer:
         return Token("IDENT", s, start)
 
     def lex_string(self, start: int) -> Token:
-        self.advance()  # opening quote
+        self.advance()
         out = ""
         while self.peek() not in ('"', "\0"):
             ch = self.advance()
@@ -80,8 +93,8 @@ class Lexer:
 
     def tokenize(self) -> List[Token]:
         tokens: List[Token] = []
-        two_char = {"=>", "==", "!=", "<=", ">=", "|>"}
-        one_char = set("+-*/(){}[],:;=<>")
+        two_char = {"=>", "==", "!=", "<=", ">=", "|>", "&&", "||"}
+        one_char = set("+-*/(){}[],:;=<>.")
 
         while self.peek() != "\0":
             self.skip_ws_and_comments()
@@ -144,6 +157,17 @@ class ListLit(Expr):
 
 
 @dataclass
+class DictLit(Expr):
+    items: List[Tuple[str, Expr]]
+
+
+@dataclass
+class Unary(Expr):
+    op: str
+    expr: Expr
+
+
+@dataclass
 class Binary(Expr):
     op: str
     left: Expr
@@ -154,6 +178,31 @@ class Binary(Expr):
 class Call(Expr):
     fn: Expr
     args: List[Expr]
+
+
+@dataclass
+class IndexExpr(Expr):
+    target: Expr
+    index: Expr
+
+
+@dataclass
+class MemberExpr(Expr):
+    target: Expr
+    name: str
+
+
+@dataclass
+class FunctionExpr(Expr):
+    params: List[str]
+    body: Expr
+
+
+@dataclass
+class IfExpr(Expr):
+    cond: Expr
+    then_expr: Expr
+    else_expr: Expr
 
 
 @dataclass
@@ -190,7 +239,6 @@ class ExprStmt(Stmt):
     expr: Expr
 
 
-# Patterns
 class Pattern:
     pass
 
@@ -232,17 +280,19 @@ class ListPat(Pattern):
 
 class Parser:
     PRECEDENCE = {
-        "|>": 1,
-        "==": 2,
-        "!=": 2,
-        "<": 3,
-        "<=": 3,
-        ">": 3,
-        ">=": 3,
-        "+": 4,
-        "-": 4,
-        "*": 5,
-        "/": 5,
+        "||": 1,
+        "&&": 2,
+        "|>": 3,
+        "==": 4,
+        "!=": 4,
+        "<": 5,
+        "<=": 5,
+        ">": 5,
+        ">=": 5,
+        "+": 6,
+        "-": 6,
+        "*": 7,
+        "/": 7,
     }
 
     def __init__(self, tokens: List[Token]):
@@ -281,31 +331,34 @@ class Parser:
         if t.kind == "KW" and t.value == "fn":
             self.advance()
             name = self.expect("IDENT").value
-            self.expect("SYM", "(")
-            params: List[str] = []
-            if not (self.peek().kind == "SYM" and self.peek().value == ")"):
-                while True:
-                    params.append(self.expect("IDENT").value)
-                    if self.peek().kind == "SYM" and self.peek().value == ",":
-                        self.advance()
-                        continue
-                    break
-            self.expect("SYM", ")")
+            params = self.parse_params()
             self.expect("SYM", "=>")
             body = self.parse_expr()
             self.expect("SYM", ";")
             return FnStmt(name, params, body)
-
         expr = self.parse_expr()
         self.expect("SYM", ";")
         return ExprStmt(expr)
 
+    def parse_params(self) -> List[str]:
+        self.expect("SYM", "(")
+        params: List[str] = []
+        if not (self.peek().kind == "SYM" and self.peek().value == ")"):
+            while True:
+                params.append(self.expect("IDENT").value)
+                if self.peek().kind == "SYM" and self.peek().value == ",":
+                    self.advance()
+                    continue
+                break
+        self.expect("SYM", ")")
+        return params
+
     def parse_expr(self, min_prec: int = 0) -> Expr:
-        left = self.parse_primary()
+        left = self.parse_prefix()
         while True:
             t = self.peek()
-            if t.kind == "SYM" and t.value == "(":
-                left = self.parse_call(left)
+            if t.kind == "SYM" and t.value in ("(", "[", "."):
+                left = self.parse_postfix(left)
                 continue
             if t.kind != "SYM" or t.value not in self.PRECEDENCE:
                 break
@@ -317,18 +370,40 @@ class Parser:
             left = Binary(op, left, right)
         return left
 
-    def parse_call(self, fn_expr: Expr) -> Expr:
-        self.expect("SYM", "(")
-        args: List[Expr] = []
-        if not (self.peek().kind == "SYM" and self.peek().value == ")"):
-            while True:
-                args.append(self.parse_expr())
-                if self.peek().kind == "SYM" and self.peek().value == ",":
-                    self.advance()
-                    continue
-                break
-        self.expect("SYM", ")")
-        return Call(fn_expr, args)
+    def parse_postfix(self, left: Expr) -> Expr:
+        t = self.peek()
+        if t.kind == "SYM" and t.value == "(":
+            self.advance()
+            args: List[Expr] = []
+            if not (self.peek().kind == "SYM" and self.peek().value == ")"):
+                while True:
+                    args.append(self.parse_expr())
+                    if self.peek().kind == "SYM" and self.peek().value == ",":
+                        self.advance()
+                        continue
+                    break
+            self.expect("SYM", ")")
+            return Call(left, args)
+        if t.kind == "SYM" and t.value == "[":
+            self.advance()
+            index = self.parse_expr()
+            self.expect("SYM", "]")
+            return IndexExpr(left, index)
+        if t.kind == "SYM" and t.value == ".":
+            self.advance()
+            name = self.expect("IDENT").value
+            return MemberExpr(left, name)
+        raise SyntaxError("invalid postfix")
+
+    def parse_prefix(self) -> Expr:
+        t = self.peek()
+        if t.kind == "SYM" and t.value == "-":
+            self.advance()
+            return Unary("-", self.parse_expr(8))
+        if t.kind == "KW" and t.value == "not":
+            self.advance()
+            return Unary("not", self.parse_expr(8))
+        return self.parse_primary()
 
     def parse_primary(self) -> Expr:
         t = self.peek()
@@ -361,9 +436,49 @@ class Parser:
                     break
             self.expect("SYM", "]")
             return ListLit(items)
+        if t.kind == "SYM" and t.value == "{":
+            return self.parse_dict_literal()
+        if t.kind == "KW" and t.value == "if":
+            return self.parse_if_expr()
+        if t.kind == "KW" and t.value == "fun":
+            self.advance()
+            params = self.parse_params()
+            self.expect("SYM", "=>")
+            return FunctionExpr(params, self.parse_expr())
         if t.kind == "KW" and t.value == "match":
             return self.parse_match_expr()
         raise SyntaxError(f"Unexpected token {t.kind}:{t.value} at {t.pos}")
+
+    def parse_if_expr(self) -> Expr:
+        self.expect("KW", "if")
+        cond = self.parse_expr()
+        self.expect("KW", "then")
+        then_expr = self.parse_expr()
+        self.expect("KW", "else")
+        else_expr = self.parse_expr()
+        return IfExpr(cond, then_expr, else_expr)
+
+    def parse_dict_literal(self) -> Expr:
+        self.expect("SYM", "{")
+        items: List[Tuple[str, Expr]] = []
+        if not (self.peek().kind == "SYM" and self.peek().value == "}"):
+            while True:
+                key_tok = self.peek()
+                if key_tok.kind == "STRING":
+                    key = self.advance().value
+                elif key_tok.kind == "IDENT":
+                    key = self.advance().value
+                else:
+                    raise SyntaxError("Dict keys must be identifiers or strings")
+                self.expect("SYM", ":")
+                value = self.parse_expr()
+                items.append((key, value))
+                if self.peek().kind == "SYM" and self.peek().value == ",":
+                    self.advance()
+                    continue
+                break
+        self.expect("SYM", "}")
+        return DictLit(items)
 
     def parse_match_expr(self) -> Expr:
         self.expect("KW", "match")
@@ -417,8 +532,6 @@ class Parser:
 
 
 class Type:
-    name: str
-
     def __init__(self, name: str):
         self.name = name
 
@@ -433,24 +546,44 @@ STRING_T = Type("String")
 UNKNOWN = Type("Unknown")
 
 
-@dataclass
 class ListType(Type):
-    inner: Type
-
     def __init__(self, inner: Type):
         super().__init__(f"List[{inner}]")
         self.inner = inner
 
 
-@dataclass
-class FunctionType(Type):
-    params: List[Type]
-    ret: Type
+class DictType(Type):
+    def __init__(self, keys: Dict[str, Type]):
+        super().__init__("Dict")
+        self.keys = keys
 
+    def __repr__(self) -> str:
+        if not self.keys:
+            return "Dict{}"
+        body = ", ".join(f"{k}: {v}" for k, v in sorted(self.keys.items()))
+        return f"Dict{{{body}}}"
+
+
+class FunctionType(Type):
     def __init__(self, params: List[Type], ret: Type):
         super().__init__("Function")
         self.params = params
         self.ret = ret
+
+    def __repr__(self) -> str:
+        return f"Function({', '.join(map(str, self.params))}) -> {self.ret}"
+
+
+def type_join(a: Type, b: Type) -> Type:
+    if a == b:
+        return a
+    if a == UNKNOWN:
+        return b
+    if b == UNKNOWN:
+        return a
+    if (a, b) in {(INT, FLOAT), (FLOAT, INT)}:
+        return FLOAT
+    return UNKNOWN
 
 
 class TypeInferencer:
@@ -466,11 +599,13 @@ class TypeInferencer:
                 local = dict(self.env)
                 for p in stmt.params:
                     local[p] = UNKNOWN
+                fn_type = FunctionType(params, UNKNOWN)
+                local[stmt.name] = fn_type
                 old = self.env
                 self.env = local
-                ret = self.infer_expr(stmt.body)
+                fn_type.ret = self.infer_expr(stmt.body)
                 self.env = old
-                self.env[stmt.name] = FunctionType(params, ret)
+                self.env[stmt.name] = fn_type
             elif isinstance(stmt, ExprStmt):
                 self.infer_expr(stmt.expr)
         return self.env
@@ -488,7 +623,15 @@ class TypeInferencer:
             if not expr.items:
                 return ListType(UNKNOWN)
             inner = self.infer_expr(expr.items[0])
+            for item in expr.items[1:]:
+                inner = type_join(inner, self.infer_expr(item))
             return ListType(inner)
+        if isinstance(expr, DictLit):
+            return DictType({k: self.infer_expr(v) for k, v in expr.items})
+        if isinstance(expr, Unary):
+            if expr.op == "not":
+                return BOOL_T
+            return self.infer_expr(expr.expr)
         if isinstance(expr, Binary):
             lt = self.infer_expr(expr.left)
             rt = self.infer_expr(expr.right)
@@ -500,13 +643,17 @@ class TypeInferencer:
                 if lt == INT and rt == INT:
                     return INT
                 return UNKNOWN
-            if expr.op in {"==", "!=", "<", "<=", ">", ">="}:
+            if expr.op in {"==", "!=", "<", "<=", ">", ">=", "&&", "||"}:
                 return BOOL_T
             if expr.op == "|>":
                 if isinstance(expr.right, Identifier):
                     fn_t = self.env.get(expr.right.name, UNKNOWN)
                     if isinstance(fn_t, FunctionType):
                         return fn_t.ret
+                if isinstance(expr.right, Call):
+                    callee_t = self.infer_expr(expr.right.fn)
+                    if isinstance(callee_t, FunctionType):
+                        return callee_t.ret
                 return UNKNOWN
             return UNKNOWN
         if isinstance(expr, Call):
@@ -514,10 +661,36 @@ class TypeInferencer:
             if isinstance(fn_t, FunctionType):
                 return fn_t.ret
             return UNKNOWN
+        if isinstance(expr, IndexExpr):
+            tt = self.infer_expr(expr.target)
+            if isinstance(tt, ListType):
+                return tt.inner
+            if isinstance(tt, DictType) and isinstance(expr.index, String):
+                return tt.keys.get(expr.index.value, UNKNOWN)
+            return UNKNOWN
+        if isinstance(expr, MemberExpr):
+            tt = self.infer_expr(expr.target)
+            if isinstance(tt, DictType):
+                return tt.keys.get(expr.name, UNKNOWN)
+            return UNKNOWN
+        if isinstance(expr, FunctionExpr):
+            old = self.env
+            local = dict(self.env)
+            for p in expr.params:
+                local[p] = UNKNOWN
+            self.env = local
+            ret = self.infer_expr(expr.body)
+            self.env = old
+            return FunctionType([UNKNOWN for _ in expr.params], ret)
+        if isinstance(expr, IfExpr):
+            return type_join(self.infer_expr(expr.then_expr), self.infer_expr(expr.else_expr))
         if isinstance(expr, MatchExpr):
             if not expr.cases:
                 return UNKNOWN
-            return self.infer_expr(expr.cases[0].expr)
+            t = self.infer_expr(expr.cases[0].expr)
+            for c in expr.cases[1:]:
+                t = type_join(t, self.infer_expr(c.expr))
+            return t
         return UNKNOWN
 
 
@@ -527,6 +700,13 @@ class TypeInferencer:
 
 
 def constant_fold(expr: Expr) -> Expr:
+    if isinstance(expr, Unary):
+        inner = constant_fold(expr.expr)
+        if isinstance(inner, Number) and expr.op == "-":
+            return Number(-inner.value)
+        if isinstance(inner, Bool) and expr.op == "not":
+            return Bool(not inner.value)
+        return Unary(expr.op, inner)
     if isinstance(expr, Binary):
         left = constant_fold(expr.left)
         right = constant_fold(expr.right)
@@ -541,13 +721,43 @@ def constant_fold(expr: Expr) -> Expr:
                 return Number(left.value / right.value)
             if expr.op == "==":
                 return Bool(left.value == right.value)
+            if expr.op == "!=":
+                return Bool(left.value != right.value)
+            if expr.op == "<":
+                return Bool(left.value < right.value)
+            if expr.op == "<=":
+                return Bool(left.value <= right.value)
+            if expr.op == ">":
+                return Bool(left.value > right.value)
+            if expr.op == ">=":
+                return Bool(left.value >= right.value)
+        if isinstance(left, Bool) and isinstance(right, Bool):
+            if expr.op == "&&":
+                return Bool(left.value and right.value)
+            if expr.op == "||":
+                return Bool(left.value or right.value)
         return Binary(expr.op, left, right)
+    if isinstance(expr, IfExpr):
+        cond = constant_fold(expr.cond)
+        then_expr = constant_fold(expr.then_expr)
+        else_expr = constant_fold(expr.else_expr)
+        if isinstance(cond, Bool):
+            return then_expr if cond.value else else_expr
+        return IfExpr(cond, then_expr, else_expr)
     if isinstance(expr, Call):
         return Call(constant_fold(expr.fn), [constant_fold(a) for a in expr.args])
+    if isinstance(expr, IndexExpr):
+        return IndexExpr(constant_fold(expr.target), constant_fold(expr.index))
+    if isinstance(expr, MemberExpr):
+        return MemberExpr(constant_fold(expr.target), expr.name)
+    if isinstance(expr, FunctionExpr):
+        return FunctionExpr(expr.params, constant_fold(expr.body))
     if isinstance(expr, MatchExpr):
         return MatchExpr(constant_fold(expr.target), [MatchCase(c.pattern, constant_fold(c.expr)) for c in expr.cases])
     if isinstance(expr, ListLit):
         return ListLit([constant_fold(i) for i in expr.items])
+    if isinstance(expr, DictLit):
+        return DictLit([(k, constant_fold(v)) for k, v in expr.items])
     return expr
 
 
@@ -583,6 +793,15 @@ class Evaluator:
             "len": lambda x: len(x),
             "head": lambda x: x[0],
             "tail": lambda x: x[1:],
+            "range": lambda n: list(range(int(n))),
+            "map": lambda xs, fn: [self.apply(fn, [x]) for x in xs],
+            "filter": lambda xs, fn: [x for x in xs if self.apply(fn, [x])],
+            "reduce": lambda xs, init, fn: functools.reduce(lambda a, b: self.apply(fn, [a, b]), xs, init),
+            "sort": lambda xs: sorted(xs),
+            "keys": lambda d: list(d.keys()),
+            "values": lambda d: list(d.values()),
+            "type": lambda x: type(x).__name__,
+            "assert": lambda cond, msg: cond if cond else (_raise(RuntimeError(str(msg)))),
         })
 
     @staticmethod
@@ -617,11 +836,22 @@ class Evaluator:
             return self.env[expr.name]
         if isinstance(expr, ListLit):
             return [self.eval_expr(x) for x in expr.items]
+        if isinstance(expr, DictLit):
+            return {k: self.eval_expr(v) for k, v in expr.items}
+        if isinstance(expr, Unary):
+            v = self.eval_expr(expr.expr)
+            if expr.op == "-":
+                return -v
+            if expr.op == "not":
+                return not v
+            raise RuntimeError(f"Unknown unary operator {expr.op}")
         if isinstance(expr, Binary):
             if expr.op == "|>":
-                val = self.eval_expr(expr.left)
-                fn = self.eval_expr(expr.right)
-                return self.apply(fn, [val])
+                return self.eval_pipeline(expr.left, expr.right)
+            if expr.op == "&&":
+                return bool(self.eval_expr(expr.left)) and bool(self.eval_expr(expr.right))
+            if expr.op == "||":
+                return bool(self.eval_expr(expr.left)) or bool(self.eval_expr(expr.right))
             l = self.eval_expr(expr.left)
             r = self.eval_expr(expr.right)
             if expr.op == "+":
@@ -649,6 +879,21 @@ class Evaluator:
             fn = self.eval_expr(expr.fn)
             args = [self.eval_expr(a) for a in expr.args]
             return self.apply(fn, args)
+        if isinstance(expr, IndexExpr):
+            target = self.eval_expr(expr.target)
+            idx = self.eval_expr(expr.index)
+            return target[int(idx)] if isinstance(target, list) else target[idx]
+        if isinstance(expr, MemberExpr):
+            target = self.eval_expr(expr.target)
+            if isinstance(target, dict):
+                if expr.name not in target:
+                    raise KeyError(f"Missing key '{expr.name}'")
+                return target[expr.name]
+            raise TypeError("member access only works on dict values")
+        if isinstance(expr, FunctionExpr):
+            return UserFunction(expr.params, expr.body, dict(self.env))
+        if isinstance(expr, IfExpr):
+            return self.eval_expr(expr.then_expr if self.eval_expr(expr.cond) else expr.else_expr)
         if isinstance(expr, MatchExpr):
             target = self.eval_expr(expr.target)
             for case in expr.cases:
@@ -662,12 +907,37 @@ class Evaluator:
             raise RuntimeError("Non-exhaustive match")
         raise RuntimeError(f"Unknown expr: {expr}")
 
+    def eval_pipeline(self, left: Expr, right: Expr) -> Any:
+        value = self.eval_expr(left)
+        if isinstance(right, Identifier):
+            return self.apply(self.eval_expr(right), [value])
+        if isinstance(right, Call):
+            fn = self.eval_expr(right.fn)
+            args: List[Any] = []
+            used_placeholder = False
+            for a in right.args:
+                if isinstance(a, Identifier) and a.name == "_":
+                    args.append(value)
+                    used_placeholder = True
+                else:
+                    args.append(self.eval_expr(a))
+            if not used_placeholder:
+                args = [value] + args
+            return self.apply(fn, args)
+        return self.apply(self.eval_expr(right), [value])
+
     def apply(self, fn: Any, args: List[Any]) -> Any:
         if callable(fn):
             return fn(*args)
         if isinstance(fn, UserFunction):
-            if len(args) != len(fn.params):
-                raise TypeError("arity mismatch")
+            if len(args) < len(fn.params):
+                bound = dict(fn.closure)
+                for p, a in zip(fn.params, args):
+                    bound[p] = a
+                return UserFunction(fn.params[len(args):], fn.body, bound)
+            if len(args) > len(fn.params):
+                first = self.apply(fn, args[: len(fn.params)])
+                return self.apply(first, args[len(fn.params):])
             old = self.env
             self.env = dict(fn.closure)
             self.env.update({p: a for p, a in zip(fn.params, args)})
@@ -698,6 +968,10 @@ class Evaluator:
         return False
 
 
+def _raise(err: Exception) -> None:
+    raise err
+
+
 def run_source(src: str, infer_only: bool = False) -> Tuple[Any, Dict[str, Type]]:
     tokens = Lexer(src).tokenize()
     stmts = Parser(tokens).parse_program()
@@ -710,7 +984,7 @@ def run_source(src: str, infer_only: bool = False) -> Tuple[Any, Dict[str, Type]
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Nebula language runtime")
+    ap = argparse.ArgumentParser(description="Nebula ultra-advanced language runtime")
     ap.add_argument("file", help="Nebula source file")
     ap.add_argument("--types", action="store_true", help="Only print inferred top-level types")
     args = ap.parse_args()

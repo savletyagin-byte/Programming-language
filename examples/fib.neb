@@ -1,6 +1,2 @@
-fn fib(n) => match n with
-  0 => 0
-  1 => 1
-  x => fib(x - 1) + fib(x - 2);
-
+fn fib(n) => if n <= 1 then n else fib(n - 1) + fib(n - 2);
 10 |> fib |> print;
