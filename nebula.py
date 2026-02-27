@@ -7,6 +7,7 @@ import math
 import random
 import threading
 import queue
+import json
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -605,6 +606,16 @@ class OptionType(Type):
         return f"Option[{self.inner}]"
 
 
+class ResultType(Type):
+    def __init__(self, ok: Type, err: Type):
+        super().__init__("Result")
+        self.ok = ok
+        self.err = err
+
+    def __repr__(self) -> str:
+        return f"Result[{self.ok}, {self.err}]"
+
+
 def type_join(a: Type, b: Type) -> Type:
     if a == b:
         return a
@@ -616,6 +627,8 @@ def type_join(a: Type, b: Type) -> Type:
         return FLOAT
     if isinstance(a, OptionType) and isinstance(b, OptionType):
         return OptionType(type_join(a.inner, b.inner))
+    if isinstance(a, ResultType) and isinstance(b, ResultType):
+        return ResultType(type_join(a.ok, b.ok), type_join(a.err, b.err))
     return UNKNOWN
 
 
@@ -694,10 +707,18 @@ class TypeInferencer:
                 return OptionType(self.infer_expr(expr.args[0]))
             if isinstance(expr.fn, Identifier) and expr.fn.name == "None":
                 return OptionType(UNKNOWN)
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "Ok" and len(expr.args) == 1:
+                return ResultType(self.infer_expr(expr.args[0]), UNKNOWN)
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "Err" and len(expr.args) == 1:
+                return ResultType(UNKNOWN, self.infer_expr(expr.args[0]))
             if isinstance(expr.fn, Identifier) and expr.fn.name == "unwrap_or" and len(expr.args) == 2:
                 left_t = self.infer_expr(expr.args[0])
                 if isinstance(left_t, OptionType):
                     return type_join(left_t.inner, self.infer_expr(expr.args[1]))
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "unwrap_result_or" and len(expr.args) == 2:
+                left_t = self.infer_expr(expr.args[0])
+                if isinstance(left_t, ResultType):
+                    return type_join(left_t.ok, self.infer_expr(expr.args[1]))
             fn_t = self.infer_expr(expr.fn)
             if isinstance(fn_t, FunctionType):
                 return fn_t.ret
@@ -791,6 +812,10 @@ def constant_fold(expr: Expr) -> Expr:
             return constant_fold(Binary("+", folded_args[0], Number(1)))
         if isinstance(expr.fn, Identifier) and expr.fn.name == "macro_when" and len(folded_args) == 3:
             return constant_fold(IfExpr(folded_args[0], folded_args[1], folded_args[2]))
+        if isinstance(expr.fn, Identifier) and expr.fn.name == "macro_assert" and len(folded_args) == 2:
+            if isinstance(folded_args[0], Bool) and folded_args[0].value:
+                return folded_args[1]
+            return Call(Identifier("assert"), [folded_args[0], String("macro_assert failed")])
         return Call(constant_fold(expr.fn), folded_args)
     if isinstance(expr, IndexExpr):
         return IndexExpr(constant_fold(expr.target), constant_fold(expr.index))
@@ -857,11 +882,20 @@ class Evaluator:
             "is_some": lambda o: isinstance(o, dict) and o.get("tag") == "Some",
             "is_none": lambda o: isinstance(o, dict) and o.get("tag") == "None",
             "unwrap_or": lambda o, default: o.get("value") if isinstance(o, dict) and o.get("tag") == "Some" else default,
+            "Ok": lambda x: {"tag": "Ok", "value": x},
+            "Err": lambda e: {"tag": "Err", "error": e},
+            "is_ok": lambda r: isinstance(r, dict) and r.get("tag") == "Ok",
+            "is_err": lambda r: isinstance(r, dict) and r.get("tag") == "Err",
+            "unwrap_result_or": lambda r, default: r.get("value") if isinstance(r, dict) and r.get("tag") == "Ok" else default,
             "channel": lambda: queue.Queue(),
             "send": lambda ch, v: ch.put(v) or True,
             "recv": lambda ch: ch.get(),
+            "try_recv": lambda ch, default=None: _try_recv(ch, default),
             "spawn": lambda fn, arg=None: _spawn_task(self, fn, arg),
             "join": lambda task: _join_task(task),
+            "par_map": lambda xs, fn: _par_map(self, xs, fn),
+            "json_encode": lambda v: json.dumps(v),
+            "json_decode": lambda s: json.loads(s),
         })
 
     @staticmethod
@@ -1032,6 +1066,14 @@ class Evaluator:
                 if len(pat.args) != 1:
                     return False
                 return self.match_pattern(pat.args[0], value.get("value"), out)
+            if pat.name == "Ok" and isinstance(value, dict) and value.get("tag") == "Ok":
+                if len(pat.args) != 1:
+                    return False
+                return self.match_pattern(pat.args[0], value.get("value"), out)
+            if pat.name == "Err" and isinstance(value, dict) and value.get("tag") == "Err":
+                if len(pat.args) != 1:
+                    return False
+                return self.match_pattern(pat.args[0], value.get("error"), out)
             return False
         return False
 
@@ -1116,6 +1158,8 @@ class MoveChecker:
                 self.check_expr(c.expr, local)
             if not has_wildcard and tags and tags.issubset({"Some", "None"}) and tags != {"Some", "None"}:
                 raise SyntaxError("Non-exhaustive Option match: handle both Some(...) and None()")
+            if not has_wildcard and tags and tags.issubset({"Ok", "Err"}) and tags != {"Ok", "Err"}:
+                raise SyntaxError("Non-exhaustive Result match: handle both Ok(...) and Err(...)")
             return
 
 
@@ -1140,6 +1184,18 @@ def _join_task(task: Dict[str, Any]) -> Any:
     if task["box"]["error"] is not None:
         raise RuntimeError(f"Task failed: {task['box']['error']}")
     return task["box"]["result"]
+
+def _try_recv(ch: queue.Queue, default: Any = None) -> Any:
+    try:
+        return ch.get_nowait()
+    except queue.Empty:
+        return default
+
+
+def _par_map(evaluator: Evaluator, xs: List[Any], fn: Any) -> List[Any]:
+    tasks = [_spawn_task(evaluator, fn, x) for x in xs]
+    return [_join_task(t) for t in tasks]
+
 
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))

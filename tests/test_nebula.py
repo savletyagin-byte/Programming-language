@@ -76,6 +76,50 @@ recv(ch);
         result, _ = run_source(src)
         self.assertEqual(result, 144)
 
+    def test_result_adt_pattern_matching(self):
+        src = """
+let r = Ok(9);
+match r with
+  Ok(v) => v + 1
+  Err(e) => 0;
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 10)
+
+    def test_result_exhaustiveness_check(self):
+        src = """
+let r = Ok(1);
+match r with
+  Ok(v) => v;
+"""
+        with self.assertRaises(SyntaxError):
+            run_source(src)
+
+    def test_parallel_map_and_json(self):
+        src = """
+fn sq(x) => x * x;
+let out = par_map([1,2,3], sq);
+let packed = json_encode({vals: out});
+json_decode(packed).vals[2];
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 9)
+
+    def test_try_recv_default(self):
+        src = """
+let ch = channel();
+try_recv(ch, 123);
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 123)
+
+    def test_macro_assert(self):
+        src = """
+macro_assert(2 < 3, 99);
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 99)
+
     def test_neural_network_xor_training(self):
         src = """
 let model = nn_train_xor(3500, 0.5, 7);

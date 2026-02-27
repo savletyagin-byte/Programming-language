@@ -22,9 +22,11 @@ Nebula is a compact but feature-dense language runtime with a full pipeline:
 - Built-in neural network primitives (`nn_create`, `nn_predict`, `nn_train_xor`)
 - Memory safety analysis via ownership-style move checks (`move(x)` + compile-time use-after-move errors)
 - Null safety with Option ADT (`Some(v)` / `None()`)
+- Error-aware Result ADT (`Ok(v)` / `Err(e)`) with exhaustive pattern matching
 - ADT-style constructor pattern matching with exhaustiveness checks for Option
-- Concurrency primitives (`spawn`, `join`, `channel`, `send`, `recv`)
-- Compile-time metaprogramming macros (`macro_inc`, `macro_when`)
+- Concurrency primitives (`spawn`, `join`, `channel`, `send`, `recv`, `try_recv`, `par_map`)
+- Compile-time metaprogramming macros (`macro_inc`, `macro_when`, `macro_assert`)
+- Serialization built-ins (`json_encode`, `json_decode`)
 
 ## Quick start
 
@@ -32,6 +34,7 @@ Nebula is a compact but feature-dense language runtime with a full pipeline:
 python3 nebula.py examples/extreme.neb
 python3 nebula.py --types examples/extreme.neb
 python3 nebula.py examples/neural.neb
+python3 nebula.py examples/everything.neb
 ```
 
 ## Syntax highlights
@@ -83,3 +86,23 @@ recv(ch) |> print;
 macro_inc(41) |> print;
 macro_when(true, 10, 0) |> print;
 ```
+
+## Result ADT and robust error modeling
+
+```nebula
+let r = Ok(42);
+match r with
+  Ok(v) => v
+  Err(e) => 0;
+```
+
+## Parallel data processing
+
+```nebula
+fn sq(x) => x * x;
+par_map([1,2,3,4], sq) |> print;
+```
+
+## Complete feature demo
+
+See `examples/everything.neb` for an integrated script combining ADTs, macros, channels, JSON, and neural-network inference.

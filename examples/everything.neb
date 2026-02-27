@@ -1,0 +1,23 @@
+# "Everything" demo: Option/Result ADTs, macros, concurrency, JSON, NN
+
+let maybe = Some(5);
+let base = match maybe with
+  Some(v) => macro_inc(v)
+  None() => 0;
+
+let parsed = json_decode("{\"x\": 7}");
+let res = if parsed.x > 0 then Ok(parsed.x + base) else Err("bad");
+let val = match res with
+  Ok(v) => v
+  Err(e) => 0;
+
+fn sq(n) => n * n;
+let threaded = par_map([1,2,3,4], sq);
+let ch = channel();
+send(ch, threaded[3]);
+let q = try_recv(ch, -1);
+
+let nn = nn_train_xor(2000, 0.5, 3);
+let pred = nn_predict(nn, [0, 1])[0];
+
+[val, q, pred > 0.7] |> print;
