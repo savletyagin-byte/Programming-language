@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import functools
+import math
+import random
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -802,6 +804,9 @@ class Evaluator:
             "values": lambda d: list(d.values()),
             "type": lambda x: type(x).__name__,
             "assert": lambda cond, msg: cond if cond else (_raise(RuntimeError(str(msg)))),
+            "nn_create": lambda inp, hid, out, seed=42: nn_create(int(inp), int(hid), int(out), int(seed)),
+            "nn_predict": lambda model, features: nn_predict(model, features),
+            "nn_train_xor": lambda epochs=3000, lr=0.5, seed=42: nn_train_xor(int(epochs), float(lr), int(seed)),
         })
 
     @staticmethod
@@ -967,6 +972,97 @@ class Evaluator:
             return True
         return False
 
+
+
+
+def _sigmoid(x: float) -> float:
+    return 1.0 / (1.0 + math.exp(-x))
+
+
+def _dsigmoid(y: float) -> float:
+    return y * (1.0 - y)
+
+
+def nn_create(input_size: int, hidden_size: int, output_size: int, seed: int = 42) -> Dict[str, Any]:
+    rng = random.Random(seed)
+    w1 = [[rng.uniform(-1.0, 1.0) for _ in range(hidden_size)] for _ in range(input_size)]
+    b1 = [0.0 for _ in range(hidden_size)]
+    w2 = [[rng.uniform(-1.0, 1.0) for _ in range(output_size)] for _ in range(hidden_size)]
+    b2 = [0.0 for _ in range(output_size)]
+    return {
+        "input": input_size,
+        "hidden": hidden_size,
+        "output": output_size,
+        "w1": w1,
+        "b1": b1,
+        "w2": w2,
+        "b2": b2,
+    }
+
+
+def nn_predict(model: Dict[str, Any], features: List[Any]) -> List[float]:
+    x = [float(v) for v in features]
+    hidden: List[float] = []
+    for j in range(model["hidden"]):
+        z = model["b1"][j]
+        for i in range(model["input"]):
+            z += x[i] * model["w1"][i][j]
+        hidden.append(_sigmoid(z))
+
+    out: List[float] = []
+    for k in range(model["output"]):
+        z = model["b2"][k]
+        for j in range(model["hidden"]):
+            z += hidden[j] * model["w2"][j][k]
+        out.append(_sigmoid(z))
+    return out
+
+
+def nn_train_xor(epochs: int = 3000, lr: float = 0.5, seed: int = 42) -> Dict[str, Any]:
+    data = [
+        ([0.0, 0.0], [0.0]),
+        ([0.0, 1.0], [1.0]),
+        ([1.0, 0.0], [1.0]),
+        ([1.0, 1.0], [0.0]),
+    ]
+    model = nn_create(2, 4, 1, seed)
+
+    for _ in range(epochs):
+        for x, y in data:
+            hidden: List[float] = []
+            for j in range(model["hidden"]):
+                z = model["b1"][j]
+                for i in range(model["input"]):
+                    z += x[i] * model["w1"][i][j]
+                hidden.append(_sigmoid(z))
+
+            out: List[float] = []
+            for k in range(model["output"]):
+                z = model["b2"][k]
+                for j in range(model["hidden"]):
+                    z += hidden[j] * model["w2"][j][k]
+                out.append(_sigmoid(z))
+
+            delta_out = [(out[k] - y[k]) * _dsigmoid(out[k]) for k in range(model["output"])]
+
+            delta_hidden: List[float] = []
+            for j in range(model["hidden"]):
+                err = sum(delta_out[k] * model["w2"][j][k] for k in range(model["output"]))
+                delta_hidden.append(err * _dsigmoid(hidden[j]))
+
+            for j in range(model["hidden"]):
+                for k in range(model["output"]):
+                    model["w2"][j][k] -= lr * hidden[j] * delta_out[k]
+            for k in range(model["output"]):
+                model["b2"][k] -= lr * delta_out[k]
+
+            for i in range(model["input"]):
+                for j in range(model["hidden"]):
+                    model["w1"][i][j] -= lr * x[i] * delta_hidden[j]
+            for j in range(model["hidden"]):
+                model["b1"][j] -= lr * delta_hidden[j]
+
+    return model
 
 def _raise(err: Exception) -> None:
     raise err

@@ -39,6 +39,18 @@ let cfg = {timeout: 30, label: "prod"};
         self.assertIn("Function", str(types["add"]))
         self.assertIn("Dict", str(types["cfg"]))
 
+    def test_neural_network_xor_training(self):
+        src = """
+let model = nn_train_xor(3500, 0.5, 7);
+let p00 = nn_predict(model, [0, 0])[0];
+let p01 = nn_predict(model, [0, 1])[0];
+let p10 = nn_predict(model, [1, 0])[0];
+let p11 = nn_predict(model, [1, 1])[0];
+[p00 < 0.2, p01 > 0.8, p10 > 0.8, p11 < 0.2];
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, [True, True, True, True])
+
     def test_constant_fold_arithmetic_and_boolean(self):
         tokens = Lexer("let x = if true then 2 + 3 else 0;".strip()).tokenize()
         stmts = Parser(tokens).parse_program()
