@@ -1,0 +1,4 @@
+let values = [3, 4];
+match values with
+  [a, b] => a * b
+  _ => 0 |> print;
