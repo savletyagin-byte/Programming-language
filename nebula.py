@@ -5,6 +5,8 @@ import argparse
 import functools
 import math
 import random
+import threading
+import queue
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -275,6 +277,12 @@ class ListPat(Pattern):
     items: List[Pattern]
 
 
+@dataclass
+class ConstructorPat(Pattern):
+    name: str
+    args: List[Pattern]
+
+
 # =====================
 # PARSER
 # =====================
@@ -502,8 +510,20 @@ class Parser:
             self.advance()
             return WildcardPat()
         if t.kind == "IDENT":
-            self.advance()
-            return IdentPat(t.value)
+            name = self.advance().value
+            if self.peek().kind == "SYM" and self.peek().value == "(":
+                self.advance()
+                args: List[Pattern] = []
+                if not (self.peek().kind == "SYM" and self.peek().value == ")"):
+                    while True:
+                        args.append(self.parse_pattern())
+                        if self.peek().kind == "SYM" and self.peek().value == ",":
+                            self.advance()
+                            continue
+                        break
+                self.expect("SYM", ")")
+                return ConstructorPat(name, args)
+            return IdentPat(name)
         if t.kind == "NUMBER":
             self.advance()
             return NumberPat(float(t.value))
@@ -576,6 +596,15 @@ class FunctionType(Type):
         return f"Function({', '.join(map(str, self.params))}) -> {self.ret}"
 
 
+class OptionType(Type):
+    def __init__(self, inner: Type):
+        super().__init__("Option")
+        self.inner = inner
+
+    def __repr__(self) -> str:
+        return f"Option[{self.inner}]"
+
+
 def type_join(a: Type, b: Type) -> Type:
     if a == b:
         return a
@@ -585,6 +614,8 @@ def type_join(a: Type, b: Type) -> Type:
         return a
     if (a, b) in {(INT, FLOAT), (FLOAT, INT)}:
         return FLOAT
+    if isinstance(a, OptionType) and isinstance(b, OptionType):
+        return OptionType(type_join(a.inner, b.inner))
     return UNKNOWN
 
 
@@ -659,6 +690,14 @@ class TypeInferencer:
                 return UNKNOWN
             return UNKNOWN
         if isinstance(expr, Call):
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "Some" and len(expr.args) == 1:
+                return OptionType(self.infer_expr(expr.args[0]))
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "None":
+                return OptionType(UNKNOWN)
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "unwrap_or" and len(expr.args) == 2:
+                left_t = self.infer_expr(expr.args[0])
+                if isinstance(left_t, OptionType):
+                    return type_join(left_t.inner, self.infer_expr(expr.args[1]))
             fn_t = self.infer_expr(expr.fn)
             if isinstance(fn_t, FunctionType):
                 return fn_t.ret
@@ -747,7 +786,12 @@ def constant_fold(expr: Expr) -> Expr:
             return then_expr if cond.value else else_expr
         return IfExpr(cond, then_expr, else_expr)
     if isinstance(expr, Call):
-        return Call(constant_fold(expr.fn), [constant_fold(a) for a in expr.args])
+        folded_args = [constant_fold(a) for a in expr.args]
+        if isinstance(expr.fn, Identifier) and expr.fn.name == "macro_inc" and len(folded_args) == 1:
+            return constant_fold(Binary("+", folded_args[0], Number(1)))
+        if isinstance(expr.fn, Identifier) and expr.fn.name == "macro_when" and len(folded_args) == 3:
+            return constant_fold(IfExpr(folded_args[0], folded_args[1], folded_args[2]))
+        return Call(constant_fold(expr.fn), folded_args)
     if isinstance(expr, IndexExpr):
         return IndexExpr(constant_fold(expr.target), constant_fold(expr.index))
     if isinstance(expr, MemberExpr):
@@ -804,9 +848,20 @@ class Evaluator:
             "values": lambda d: list(d.values()),
             "type": lambda x: type(x).__name__,
             "assert": lambda cond, msg: cond if cond else (_raise(RuntimeError(str(msg)))),
+            "move": lambda x: x,
             "nn_create": lambda inp, hid, out, seed=42: nn_create(int(inp), int(hid), int(out), int(seed)),
             "nn_predict": lambda model, features: nn_predict(model, features),
             "nn_train_xor": lambda epochs=3000, lr=0.5, seed=42: nn_train_xor(int(epochs), float(lr), int(seed)),
+            "Some": lambda x: {"tag": "Some", "value": x},
+            "None": lambda: {"tag": "None"},
+            "is_some": lambda o: isinstance(o, dict) and o.get("tag") == "Some",
+            "is_none": lambda o: isinstance(o, dict) and o.get("tag") == "None",
+            "unwrap_or": lambda o, default: o.get("value") if isinstance(o, dict) and o.get("tag") == "Some" else default,
+            "channel": lambda: queue.Queue(),
+            "send": lambda ch, v: ch.put(v) or True,
+            "recv": lambda ch: ch.get(),
+            "spawn": lambda fn, arg=None: _spawn_task(self, fn, arg),
+            "join": lambda task: _join_task(task),
         })
 
     @staticmethod
@@ -970,10 +1025,121 @@ class Evaluator:
                 if not self.match_pattern(p, v, out):
                     return False
             return True
+        if isinstance(pat, ConstructorPat):
+            if pat.name == "None" and isinstance(value, dict) and value.get("tag") == "None":
+                return len(pat.args) == 0
+            if pat.name == "Some" and isinstance(value, dict) and value.get("tag") == "Some":
+                if len(pat.args) != 1:
+                    return False
+                return self.match_pattern(pat.args[0], value.get("value"), out)
+            return False
         return False
 
 
 
+
+
+class MoveChecker:
+    """Tiny compile-time ownership checker: disallow use-after-move for top-level bindings."""
+
+    def __init__(self):
+        self.moved: set[str] = set()
+
+    def check_program(self, stmts: List[Stmt]) -> None:
+        for stmt in stmts:
+            if isinstance(stmt, LetStmt):
+                self.check_expr(stmt.expr, local=set())
+                self.moved.discard(stmt.name)
+            elif isinstance(stmt, FnStmt):
+                self.moved.discard(stmt.name)
+            elif isinstance(stmt, ExprStmt):
+                self.check_expr(stmt.expr, local=set())
+
+    def check_expr(self, expr: Expr, local: set[str]) -> None:
+        if isinstance(expr, Identifier):
+            if expr.name in self.moved and expr.name not in local:
+                raise SyntaxError(f"Use-after-move detected for '{expr.name}'")
+            return
+        if isinstance(expr, (Number, String, Bool)):
+            return
+        if isinstance(expr, ListLit):
+            for it in expr.items:
+                self.check_expr(it, local)
+            return
+        if isinstance(expr, DictLit):
+            for _, v in expr.items:
+                self.check_expr(v, local)
+            return
+        if isinstance(expr, Unary):
+            self.check_expr(expr.expr, local)
+            return
+        if isinstance(expr, Binary):
+            self.check_expr(expr.left, local)
+            self.check_expr(expr.right, local)
+            return
+        if isinstance(expr, Call):
+            if isinstance(expr.fn, Identifier) and expr.fn.name == "move" and len(expr.args) == 1 and isinstance(expr.args[0], Identifier):
+                name = expr.args[0].name
+                if name in self.moved:
+                    raise SyntaxError(f"Double-move detected for '{name}'")
+                self.moved.add(name)
+                return
+            self.check_expr(expr.fn, local)
+            for a in expr.args:
+                self.check_expr(a, local)
+            return
+        if isinstance(expr, IndexExpr):
+            self.check_expr(expr.target, local)
+            self.check_expr(expr.index, local)
+            return
+        if isinstance(expr, MemberExpr):
+            self.check_expr(expr.target, local)
+            return
+        if isinstance(expr, FunctionExpr):
+            next_local = set(local) | set(expr.params)
+            self.check_expr(expr.body, next_local)
+            return
+        if isinstance(expr, IfExpr):
+            self.check_expr(expr.cond, local)
+            self.check_expr(expr.then_expr, local)
+            self.check_expr(expr.else_expr, local)
+            return
+        if isinstance(expr, MatchExpr):
+            self.check_expr(expr.target, local)
+            tags = set()
+            has_wildcard = False
+            for c in expr.cases:
+                if isinstance(c.pattern, WildcardPat):
+                    has_wildcard = True
+                if isinstance(c.pattern, ConstructorPat):
+                    tags.add(c.pattern.name)
+                self.check_expr(c.expr, local)
+            if not has_wildcard and tags and tags.issubset({"Some", "None"}) and tags != {"Some", "None"}:
+                raise SyntaxError("Non-exhaustive Option match: handle both Some(...) and None()")
+            return
+
+
+def _spawn_task(evaluator: Evaluator, fn: Any, arg: Any = None) -> Dict[str, Any]:
+    box: Dict[str, Any] = {"result": None, "error": None}
+
+    def runner() -> None:
+        try:
+            args = [] if arg is None else [arg]
+            box["result"] = evaluator.apply(fn, args)
+        except Exception as exc:  # runtime transport
+            box["error"] = exc
+
+    t = threading.Thread(target=runner, daemon=True)
+    t.start()
+    return {"thread": t, "box": box}
+
+
+def _join_task(task: Dict[str, Any]) -> Any:
+    t = task["thread"]
+    t.join()
+    if task["box"]["error"] is not None:
+        raise RuntimeError(f"Task failed: {task['box']['error']}")
+    return task["box"]["result"]
 
 def _sigmoid(x: float) -> float:
     return 1.0 / (1.0 + math.exp(-x))
@@ -1071,6 +1237,7 @@ def _raise(err: Exception) -> None:
 def run_source(src: str, infer_only: bool = False) -> Tuple[Any, Dict[str, Type]]:
     tokens = Lexer(src).tokenize()
     stmts = Parser(tokens).parse_program()
+    MoveChecker().check_program(stmts)
     types = TypeInferencer().infer_program(stmts)
     if infer_only:
         return None, types

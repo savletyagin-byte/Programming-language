@@ -39,6 +39,43 @@ let cfg = {timeout: 30, label: "prod"};
         self.assertIn("Function", str(types["add"]))
         self.assertIn("Dict", str(types["cfg"]))
 
+    def test_option_adt_pattern_matching(self):
+        src = """
+let x = Some(41);
+match x with
+  Some(v) => v + 1
+  None() => 0;
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 42)
+
+    def test_move_checker_use_after_move(self):
+        src = """
+let x = [1,2,3];
+move(x);
+x;
+"""
+        with self.assertRaises(SyntaxError):
+            run_source(src)
+
+    def test_macro_expansion(self):
+        src = """
+macro_inc(5);
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 6)
+
+    def test_concurrency_spawn_join_and_channels(self):
+        src = """
+fn sq(n) => n * n;
+let task = spawn(sq, 12);
+let ch = channel();
+send(ch, join(task));
+recv(ch);
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, 144)
+
     def test_neural_network_xor_training(self):
         src = """
 let model = nn_train_xor(3500, 0.5, 7);

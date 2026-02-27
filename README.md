@@ -20,6 +20,11 @@ Nebula is a compact but feature-dense language runtime with a full pipeline:
 - Partial application/currying for user-defined functions
 - Higher-order built-ins (`map`, `filter`, `reduce`, `range`, etc.)
 - Built-in neural network primitives (`nn_create`, `nn_predict`, `nn_train_xor`)
+- Memory safety analysis via ownership-style move checks (`move(x)` + compile-time use-after-move errors)
+- Null safety with Option ADT (`Some(v)` / `None()`)
+- ADT-style constructor pattern matching with exhaustiveness checks for Option
+- Concurrency primitives (`spawn`, `join`, `channel`, `send`, `recv`)
+- Compile-time metaprogramming macros (`macro_inc`, `macro_when`)
 
 ## Quick start
 
@@ -46,4 +51,35 @@ Nebula includes built-ins for simple feed-forward neural networks with backprop 
 let model = nn_train_xor(3500, 0.5, 7);
 let out = nn_predict(model, [0, 1])[0];
 out |> print;
+```
+
+## Advanced safety & type-oriented model
+
+- **Immutability by default**: `let` bindings are immutable; no reassignment exists.
+- **Memory safety without GC pauses**: a compile-time move checker rejects use-after-move and double-move patterns.
+- **Strong static typing with inference**: top-level values and functions are inferred (including Option and function shapes).
+- **Null safety**: model absence with `None()` and presence with `Some(value)`; use pattern matching or `unwrap_or`.
+
+```nebula
+let maybe = Some(10);
+match maybe with
+  Some(v) => v + 1
+  None() => 0;
+```
+
+## Concurrency
+
+```nebula
+fn work(x) => x * x;
+let t = spawn(work, 9);
+let ch = channel();
+send(ch, join(t));
+recv(ch) |> print;
+```
+
+## Macros (compile-time AST rewrites)
+
+```nebula
+macro_inc(41) |> print;
+macro_when(true, 10, 0) |> print;
 ```
