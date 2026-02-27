@@ -1,0 +1,9 @@
+# Train a small neural net for XOR and inspect predictions
+let model = nn_train_xor(3500, 0.5, 7);
+
+let p00 = nn_predict(model, [0, 0])[0];
+let p01 = nn_predict(model, [0, 1])[0];
+let p10 = nn_predict(model, [1, 0])[0];
+let p11 = nn_predict(model, [1, 1])[0];
+
+[p00, p01, p10, p11] |> print;

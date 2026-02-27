@@ -1,0 +1,4 @@
+let payload = {kind: "pair", value: [3, 4]};
+match payload.value with
+  [a, b] => a * b
+  _ => 0 |> print;

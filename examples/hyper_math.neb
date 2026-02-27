@@ -1,0 +1,10 @@
+# Hyper-advanced mathematics showcase
+fn cube(x) => x * x * x;
+
+let trig = [sin(pi / 2), cos(0), tan(0)];
+let stats = [mean([1,2,3,4,5]), variance([1,2,3,4,5]), stddev([1,2,3,4,5])];
+let linalg = [dot([1,2,3], [3,2,1]), det([[2,5],[1,3]])];
+let calc = [derivative(cube, 2), integrate(cube, 0, 1, 200)];
+let probs = softmax([1, 2, 3, 4]);
+
+[trig, stats, linalg, calc, probs] |> print;

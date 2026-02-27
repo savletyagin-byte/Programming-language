@@ -1,0 +1,11 @@
+fn worker(n) => macro_inc(n);
+
+let maybe = Some(9);
+let value = match maybe with
+  Some(v) => v
+  None() => 0;
+
+let t = spawn(worker, value);
+let ch = channel();
+send(ch, join(t));
+recv(ch) |> print;

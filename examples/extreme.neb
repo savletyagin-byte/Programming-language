@@ -1,0 +1,11 @@
+fn fib(n) => if n <= 1 then n else fib(n - 1) + fib(n - 2);
+
+let config = {name: "Nebula", target: 10};
+let nums = range(config.target);
+let squares = nums |> map(fun(x) => x * x);
+let evens = squares |> filter(fun(x) => x > 10);
+
+# Placeholder-based pipeline injection into non-leading argument position
+let total = evens |> reduce(_, 0, fun(acc, x) => acc + x);
+
+if total > 0 && fib(10) == 55 then total else 0 |> print;
