@@ -35,6 +35,7 @@ python3 nebula.py examples/extreme.neb
 python3 nebula.py --types examples/extreme.neb
 python3 nebula.py examples/neural.neb
 python3 nebula.py examples/everything.neb
+python3 nebula.py examples/hyper_math.neb
 ```
 
 ## Syntax highlights
@@ -106,3 +107,17 @@ par_map([1,2,3,4], sq) |> print;
 ## Complete feature demo
 
 See `examples/everything.neb` for an integrated script combining ADTs, macros, channels, JSON, and neural-network inference.
+
+## Hyper-advanced math toolkit
+
+Nebula now ships a broad math runtime: trigonometric/hyperbolic functions, combinatorics/number theory, statistics, linear algebra, softmax/sigmoid, and numeric calculus (`derivative`, `integrate`).
+
+```nebula
+fn f(x) => x * x;
+let slope = derivative(f, 3);
+let area = integrate(f, 0, 1, 200);
+let m = matmul([[1,2],[3,4]], [[5,6],[7,8]]);
+[slope, area, det(m)] |> print;
+```
+
+See `examples/hyper_math.neb` for a larger showcase.

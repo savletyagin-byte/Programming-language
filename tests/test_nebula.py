@@ -120,6 +120,40 @@ macro_assert(2 < 3, 99);
         result, _ = run_source(src)
         self.assertEqual(result, 99)
 
+    def test_hyper_advanced_math_stats_and_linear_algebra(self):
+        src = """
+let stats = [mean([1,2,3,4]), median([1,2,3,100]), round(stddev([2,4,4,4,5,5,7,9]), 5)];
+let la = [dot([1,2,3], [4,5,6]), det([[1,2],[3,4]]), matmul([[1,2],[3,4]], [[5,6],[7,8]])[1][1]];
+[stats, la];
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result[0][0], 2.5)
+        self.assertEqual(result[0][1], 2.5)
+        self.assertAlmostEqual(result[0][2], 2.0, places=4)
+        self.assertEqual(result[1][0], 32)
+        self.assertEqual(result[1][1], -2)
+        self.assertEqual(result[1][2], 50)
+
+    def test_hyper_advanced_math_calculus_and_softmax(self):
+        src = """
+fn sq(x) => x * x;
+let d = derivative(sq, 3);
+let area = integrate(sq, 0, 1, 200);
+let sm = softmax([1,2,3]);
+[round(d, 3), round(area, 3), round(sm[0] + sm[1] + sm[2], 6)];
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result[0], 6.0)
+        self.assertAlmostEqual(result[1], 0.333, places=3)
+        self.assertEqual(result[2], 1.0)
+
+    def test_number_theory_helpers(self):
+        src = """
+[gcd(84, 30), lcm(12, 18), factorial(6), comb(6,2), perm(6,2), is_prime(97), len(primes_up_to(30))];
+"""
+        result, _ = run_source(src)
+        self.assertEqual(result, [6, 36, 720, 15, 30, True, 10])
+
     def test_neural_network_xor_training(self):
         src = """
 let model = nn_train_xor(3500, 0.5, 7);

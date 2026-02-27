@@ -896,6 +896,48 @@ class Evaluator:
             "par_map": lambda xs, fn: _par_map(self, xs, fn),
             "json_encode": lambda v: json.dumps(v),
             "json_decode": lambda s: json.loads(s),
+            "pi": math.pi,
+            "e": math.e,
+            "tau": math.tau,
+            "sin": lambda x: math.sin(float(x)),
+            "cos": lambda x: math.cos(float(x)),
+            "tan": lambda x: math.tan(float(x)),
+            "asin": lambda x: math.asin(float(x)),
+            "acos": lambda x: math.acos(float(x)),
+            "atan": lambda x: math.atan(float(x)),
+            "sinh": lambda x: math.sinh(float(x)),
+            "cosh": lambda x: math.cosh(float(x)),
+            "tanh": lambda x: math.tanh(float(x)),
+            "sqrt": lambda x: math.sqrt(float(x)),
+            "exp": lambda x: math.exp(float(x)),
+            "log": lambda x: math.log(float(x)),
+            "log10": lambda x: math.log10(float(x)),
+            "pow": lambda a, b: float(a) ** float(b),
+            "abs": lambda x: abs(x),
+            "floor": lambda x: math.floor(float(x)),
+            "ceil": lambda x: math.ceil(float(x)),
+            "round": lambda x, ndigits=0: round(float(x), int(ndigits)),
+            "gcd": lambda a, b: math.gcd(int(a), int(b)),
+            "lcm": lambda a, b: math.lcm(int(a), int(b)),
+            "factorial": lambda n: math.factorial(int(n)),
+            "comb": lambda n, k: math.comb(int(n), int(k)),
+            "perm": lambda n, k: math.perm(int(n), int(k)),
+            "is_prime": lambda n: _is_prime(int(n)),
+            "primes_up_to": lambda n: _primes_up_to(int(n)),
+            "mean": lambda xs: _mean(xs),
+            "median": lambda xs: _median(xs),
+            "variance": lambda xs: _variance(xs),
+            "stddev": lambda xs: _stddev(xs),
+            "linspace": lambda start, stop, count: _linspace(float(start), float(stop), int(count)),
+            "dot": lambda a, b: _dot(a, b),
+            "norm": lambda xs: _norm(xs),
+            "transpose": lambda m: _transpose(m),
+            "matmul": lambda a, b: _matmul(a, b),
+            "det": lambda m: _determinant(m),
+            "softmax": lambda xs: _softmax(xs),
+            "sigmoid": lambda x: 1.0 / (1.0 + math.exp(-float(x))),
+            "derivative": lambda fn, x, h=1e-5: _derivative(self, fn, float(x), float(h)),
+            "integrate": lambda fn, a, b, n=100: _integrate_simpson(self, fn, float(a), float(b), int(n)),
         })
 
     @staticmethod
@@ -1195,6 +1237,147 @@ def _try_recv(ch: queue.Queue, default: Any = None) -> Any:
 def _par_map(evaluator: Evaluator, xs: List[Any], fn: Any) -> List[Any]:
     tasks = [_spawn_task(evaluator, fn, x) for x in xs]
     return [_join_task(t) for t in tasks]
+
+
+def _is_prime(n: int) -> bool:
+    if n < 2:
+        return False
+    if n % 2 == 0:
+        return n == 2
+    k = 3
+    while k * k <= n:
+        if n % k == 0:
+            return False
+        k += 2
+    return True
+
+
+def _primes_up_to(n: int) -> List[int]:
+    if n < 2:
+        return []
+    sieve = [True] * (n + 1)
+    sieve[0] = sieve[1] = False
+    p = 2
+    while p * p <= n:
+        if sieve[p]:
+            for m in range(p * p, n + 1, p):
+                sieve[m] = False
+        p += 1
+    return [i for i, is_p in enumerate(sieve) if is_p]
+
+
+def _mean(xs: List[Any]) -> float:
+    vals = [float(x) for x in xs]
+    return sum(vals) / len(vals)
+
+
+def _median(xs: List[Any]) -> float:
+    vals = sorted(float(x) for x in xs)
+    n = len(vals)
+    mid = n // 2
+    if n % 2 == 1:
+        return vals[mid]
+    return (vals[mid - 1] + vals[mid]) / 2.0
+
+
+def _variance(xs: List[Any]) -> float:
+    vals = [float(x) for x in xs]
+    m = _mean(vals)
+    return sum((x - m) ** 2 for x in vals) / len(vals)
+
+
+def _stddev(xs: List[Any]) -> float:
+    return math.sqrt(_variance(xs))
+
+
+def _linspace(start: float, stop: float, count: int) -> List[float]:
+    if count <= 1:
+        return [start]
+    step = (stop - start) / (count - 1)
+    return [start + i * step for i in range(count)]
+
+
+def _dot(a: List[Any], b: List[Any]) -> float:
+    if len(a) != len(b):
+        raise ValueError("dot: vectors must have same length")
+    return sum(float(x) * float(y) for x, y in zip(a, b))
+
+
+def _norm(xs: List[Any]) -> float:
+    return math.sqrt(sum(float(x) ** 2 for x in xs))
+
+
+def _transpose(m: List[List[Any]]) -> List[List[float]]:
+    if not m:
+        return []
+    rows = len(m)
+    cols = len(m[0])
+    for r in m:
+        if len(r) != cols:
+            raise ValueError("transpose: ragged matrix")
+    return [[float(m[i][j]) for i in range(rows)] for j in range(cols)]
+
+
+def _matmul(a: List[List[Any]], b: List[List[Any]]) -> List[List[float]]:
+    if not a or not b:
+        return []
+    a_cols = len(a[0])
+    b_cols = len(b[0])
+    if any(len(r) != a_cols for r in a) or any(len(r) != b_cols for r in b):
+        raise ValueError("matmul: ragged matrix")
+    if a_cols != len(b):
+        raise ValueError("matmul: incompatible shapes")
+    bt = _transpose(b)
+    out: List[List[float]] = []
+    for row in a:
+        out.append([_dot(row, col) for col in bt])
+    return out
+
+
+def _determinant(m: List[List[Any]]) -> float:
+    n = len(m)
+    if n == 0:
+        return 1.0
+    if any(len(row) != n for row in m):
+        raise ValueError("det: matrix must be square")
+    vals = [[float(v) for v in row] for row in m]
+    if n == 1:
+        return vals[0][0]
+    if n == 2:
+        return vals[0][0] * vals[1][1] - vals[0][1] * vals[1][0]
+    det = 0.0
+    for c in range(n):
+        minor = [row[:c] + row[c + 1:] for row in vals[1:]]
+        det += ((-1) ** c) * vals[0][c] * _determinant(minor)
+    return det
+
+
+def _softmax(xs: List[Any]) -> List[float]:
+    vals = [float(x) for x in xs]
+    m = max(vals)
+    exps = [math.exp(v - m) for v in vals]
+    s = sum(exps)
+    return [v / s for v in exps]
+
+
+def _derivative(evaluator: Evaluator, fn: Any, x: float, h: float = 1e-5) -> float:
+    f1 = evaluator.apply(fn, [x + h])
+    f2 = evaluator.apply(fn, [x - h])
+    return (float(f1) - float(f2)) / (2.0 * h)
+
+
+def _integrate_simpson(evaluator: Evaluator, fn: Any, a: float, b: float, n: int = 100) -> float:
+    if n <= 0:
+        n = 2
+    if n % 2 == 1:
+        n += 1
+    h = (b - a) / n
+    s = float(evaluator.apply(fn, [a])) + float(evaluator.apply(fn, [b]))
+    for i in range(1, n):
+        x = a + i * h
+        fx = float(evaluator.apply(fn, [x]))
+        s += 4.0 * fx if i % 2 == 1 else 2.0 * fx
+    return s * h / 3.0
 
 
 def _sigmoid(x: float) -> float:
